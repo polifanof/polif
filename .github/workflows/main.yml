@@ -93,7 +93,7 @@ jobs:
       - name: Re-trigger next run
         if: success()
         env:
-          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
+          GH_TOKEN: ${{ secrets.YT_TOKEN }}
         run: |
           gh workflow run "${{ github.workflow }}" \
             --repo "${{ github.repository }}" \
