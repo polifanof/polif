@@ -3,7 +3,7 @@ name: System Update
 on:
   workflow_dispatch:
   schedule:
-    - cron: '*/15 * * * *'  
+    - cron: '*/15 * * * *'
 
 concurrency:
   group: system-update
@@ -42,17 +42,27 @@ jobs:
             ssh \
               -p 443 \
               -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=/dev/null \
               -o ServerAliveInterval=30 \
               -o ExitOnForwardFailure=yes \
-              -R0:localhost:3128 \
+              -R 0:localhost:3128 \
               tcp@a.pinggy.io > pinggy.log 2>&1 &
 
-            sleep 20
+            sleep 25
 
-            echo "=== PINGGY LOG ==="
+            echo "=== PINGGY LOG START ==="
             cat pinggy.log || true
+            echo "=== PINGGY LOG END ==="
 
-            PINGGY_URL=$(grep -Eo '[a-zA-Z0-9.-]+\.pinggy\.(link|io):[0-9]+' pinggy.log | head -1)
+            PINGGY_URL=$(grep -Eo 'tcp://[^[:space:]]+' pinggy.log | head -1 | sed 's#tcp://##' | tr -d '\r')
+
+            if [ -z "${PINGGY_URL}" ]; then
+              PINGGY_URL=$(grep -Eo '[a-zA-Z0-9.-]+\.a\.pinggy\.io:[0-9]+' pinggy.log | head -1 | tr -d '\r')
+            fi
+
+            if [ -z "${PINGGY_URL}" ]; then
+              PINGGY_URL=$(grep -Eo '[a-zA-Z0-9.-]+\.pinggy\.(io|link):[0-9]+' pinggy.log | head -1 | tr -d '\r')
+            fi
 
             if [ -n "${PINGGY_URL}" ]; then
               echo "${PINGGY_URL}" > pinggy_url.txt
